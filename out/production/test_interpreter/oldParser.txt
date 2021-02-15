@@ -1,0 +1,215 @@
+package parser;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import com.company.Main;
+import errorHandler.SyntaxError;
+import scanner.*;
+
+/*
+* expression: whole sentence, deals with variable assignment
+* comparing expression: two arithmetic expression, ==, >, <
+* arithmetic expression: two terms, + and -
+* term: two factors, *, /, // and %
+* factor: unary number, '-' and '+' prefix, eks -5
+* power: atom raised to the power of something, **
+* atom: number or whole new expression, int, float or expr()
+*
+* The errors thrown by the parser are: 'SyntaxError'
+* */
+
+public class Parser {
+    private final List<Token> tokens;
+    private  List<GenericNode> statements = new ArrayList<>();
+    private int tokIdx;
+    private Token curTok;
+
+    public final String filename;
+
+    public Parser(Scanner scanner){
+        tokens = scanner.getTokens();
+        filename = scanner.filename;
+        tokIdx = 0;
+        nextToken();
+    }
+
+    public List<GenericNode> parse() {
+        statements = new ArrayList<>();
+        curTok = null;
+        tokIdx = 0;
+        nextToken();
+
+        if(curTok.token_type != TokenTypes.EOF){
+            makeStatements();
+            return statements;
+        }else{
+            System.exit(0);
+            return null;
+        }
+    }
+
+    private void nextToken(){
+        if(tokIdx < tokens.size()){
+            curTok = tokens.get(tokIdx);
+        }else{
+            curTok = null;
+        }
+        tokIdx++;
+    }
+
+    private Token peekNextToken(){
+        return tokens.get(tokIdx);
+    }
+
+    GenericNode atom(){
+        Token tok = curTok;
+        GenericNode newNode = new GenericNode();
+        if(curTok.token_type == TokenTypes.INT || curTok.token_type == TokenTypes.FLOAT || curTok.token_type == TokenTypes.BOOL){
+            Main.logger.noteOperation("found atom");
+
+            nextToken();
+            newNode.Primitive(tok);
+            return newNode;
+        }else if(curTok.token_type == TokenTypes.VARIABLE){
+            Main.logger.noteOperation("found variable");
+
+            nextToken();
+            newNode.Variable(tok);
+            return newNode;
+        } else if(curTok.token_type == TokenTypes.LEFTPARAN){
+            Main.logger.noteOperation("found new expression in parentheses");
+
+            nextToken();
+            GenericNode expression = expr();
+            if(curTok.token_type == TokenTypes.RIGHTPARAN){
+                nextToken();
+                return expression;
+            }else{
+                Main.error(new SyntaxError("Expected )", filename, curTok.rowPos, curTok.linePos));
+                return null;
+            }
+        }else{
+            Main.error(new SyntaxError("Expected number, operator or parentheses, not '" + tok.token_type.image +"'" , filename, curTok.rowPos, curTok.linePos));
+            return null;
+        }
+    }
+
+    GenericNode power(){
+        GenericNode left = atom();
+        while(curTok.token_type  == TokenTypes.POWER){
+            Main.logger.noteOperation("found power operator");
+
+            Token operation_token = curTok;
+            nextToken();
+
+            GenericNode right = factor();
+            GenericNode newNode = new GenericNode();
+            newNode.BinOp(left, operation_token, right);
+            left = newNode;
+        }
+        return left;
+    }
+
+    GenericNode factor(){
+        Token tok = curTok;
+        if(curTok.token_type == TokenTypes.PLUS || curTok.token_type == TokenTypes.MINUS){
+            Main.logger.noteOperation("found unary factor");
+
+            nextToken();
+            GenericNode factorNode = factor();
+            GenericNode newNode = new GenericNode();
+            newNode.Unary(tok, factorNode);
+            return newNode;
+        }
+        return power();
+    }
+
+    GenericNode term(){
+        GenericNode left = factor();
+        while(  curTok.token_type == TokenTypes.MULTIPLY ||
+                curTok.token_type == TokenTypes.DIVIDE ||
+                curTok.token_type == TokenTypes.FLOORDIVIDE ||
+                curTok.token_type == TokenTypes.MODULUS){
+
+            Main.logger.noteOperation("found term");
+
+            Token operation = curTok;
+            nextToken();
+            GenericNode right = factor();
+
+            GenericNode newNode = new GenericNode();
+            newNode.BinOp(left, operation, right);
+            left = newNode;
+        }
+        return left;
+    }
+
+    GenericNode arithExpr(){
+        GenericNode left = term();
+        while(curTok.token_type == TokenTypes.PLUS || curTok.token_type == TokenTypes.MINUS){
+            Main.logger.noteOperation("found arithmetic expression");
+
+            Token operation = curTok;
+            nextToken();
+            GenericNode right = term();
+
+            GenericNode newNode = new GenericNode();
+            newNode.BinOp(left, operation, right);
+            left = newNode;
+        }
+        return left;
+    }
+    GenericNode compExpr(){
+        GenericNode left = arithExpr();
+        while(  curTok.token_type == TokenTypes.COMPAREEQUAL ||
+                curTok.token_type == TokenTypes.GREATERTHAN ||
+                curTok.token_type == TokenTypes.LESSTHAN){
+
+            Main.logger.noteOperation("found comparing expression");
+
+            Token operation = curTok;
+            nextToken();
+            GenericNode right = expr();
+
+            GenericNode newNode = new GenericNode();
+            newNode.compOp(left, operation, right);
+            left = newNode;
+        }
+        return left;
+    }
+
+    GenericNode expr(){
+        if(curTok.token_type == TokenTypes.VARIABLE){
+            Token peek = peekNextToken();
+            if( peek.token_type == TokenTypes.ASSIGN ||
+                peek.token_type == TokenTypes.PLUSEQUAL ||
+                peek.token_type == TokenTypes.MINUSEQUAL ||
+                peek.token_type == TokenTypes.MULTIPLYEQUAL ||
+                peek.token_type == TokenTypes.DIVIDEEQUAL ||
+                peek.token_type == TokenTypes.MODULUSEQUAL){
+
+                Main.logger.noteOperation("found variable assignment");
+
+                Token tok = curTok; nextToken();
+                GenericNode varNode = new GenericNode(); varNode.Variable(tok);
+                tok = curTok; nextToken();
+                GenericNode newNode = new GenericNode(); newNode.assignOp(varNode, tok, expr());
+                return newNode;
+            }
+        }
+        return compExpr();
+    }
+
+    private void makeStatements(){
+        while (curTok.token_type != TokenTypes.EOF){
+            if(curTok.token_type == TokenTypes.NEWLINE){
+                nextToken();
+                continue;
+            }
+            GenericNode expression = expr();
+            statements.add(expression);
+        }
+    }
+}
